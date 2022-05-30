@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>上传文件</title>
+    <style>
+        body {
+            /*设置body背景颜色*/
+            background-color: #f5f5f5;
+        }
+        .container{
+            /*外边距居中*/
+            margin: 20px auto;
+            /*内边距*/
+            padding: 20px;
+            /*背景颜色*/
+            background-color: rgb(196,229,232);
+            /*边框为5px 实线 */
+            border: 5px solid rgb(0, 181, 203);
+            /*设置为弹性容器*/
+            display: flex;
+            /*设置从上到下*/
+            flex-direction: column;
+        }
+
+        .item {
+            /*背景颜色*/
+            background-color: rgb(0, 181, 203);
+            /*字体颜色*/
+            color: white;
+            /*宽*/
+            width: 100%;
+            /*高*/
+            height: 20%;
+            /*外边距*/
+            margin: 2px;
+            /*字体加粗*/
+            font-weight: bold;
+            /*字体大小*/
+            /*font-size: 5em;*/
+            /*文字居中*/
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="item">
+            <label>文件:</label>
+            <label id="file-path"></label>
+        </div>
+        <div class="item">
+            <label>获取到:</label>
+            <label id="get-images"></label>
+        </div>
+        <div id="msg">
+
+        </div>
+    </div>
+</body>
+<script>
+    const { app } = require('electron').remote;
+    const { ipcRenderer } = require('electron');
+    const fs = require('fs');
+    const path = require("path");
+    const rpc = require('../lib/rpc');
+    const md = require('../lib/md');
+    const config = require('../lib/config');
+    //当前应用的目录
+    const appPath = app.isPackaged ? path.dirname(app.getPath('exe')) : app.getAppPath();
+    //读取配置
+    const userInfo = JSON.parse(fs.readFileSync(path.join(appPath,'cnblog-tool.json')).toString());
+    //源文件
+    var filePath = null;
+    //目标文件
+    var outFilePath = null;
+    var filePathDom = document.getElementById('file-path');
+    var getImagesDom = document.getElementById('get-images');
+    var msgDom = document.getElementById('msg');
+
+    //监听主进程事件
+    ipcRenderer.on('file-path-event', (event, arg) => {
+        //console.log('渲染进程收到的消息:',arg);
+        filePath = arg;
+        //写入文件路径
+        filePathDom.innerText = filePath;
+        //判断文件是否存在
+        if( !fs.existsSync( filePath ) ){
+            msgDom.innerText = '文件不存在';
+            return false;
+        }
+        //获取所有有效路径
+        let imageList = md.getAllLocalImage(filePath);
+        if(imageList.length === 0){
+            msgDom.innerText = '获取到的本地图片为零';
+            return false;
+        }
+        getImagesDom.innerText = `有效路径${imageList.length}个`;
+        //目标路径
+        outFilePath = path.join( path.dirname(filePath), path.basename(filePath, path.extname(filePath)) + '-cnblog' + path.extname(filePath) );
+        //复制文件
+        fs.copyFileSync(filePath , outFilePath);
+
+        //文件内容
+        var fileContent = fs.readFileSync(outFilePath).toString();
+        ///图片统计
+        var imgCount = imageList.length;
+        var uploadImgCount = 0;
+        //遍历要上传的图片
+        for (var i = 0; i < imageList.length; i++){
+            ( (imageSrc) =>{
+                //图片的绝对路径
+                var absolutePath = md.getImageAbsolutePath(filePath,imageSrc);
+                //rpc上传
+                rpc.newMediaObject(userInfo.blogId,userInfo.username,userInfo.password,absolutePath, (error, value) =>{
+                    uploadImgCount++;
+                    let url = absolutePath;
+
+                    // 检查是否有错误返回
+                    if(error){
+                        msgDom.innerHTML += `<div>上传失败:${absolutePath}</div>`;
+                        msgDom.innerHTML += `<div>错误原因:${error}</div>`;
+                    }else{
+                        //获取返回链接
+                        url = value.url;
+                        msgDom.innerHTML += `<div>上传成功:${absolutePath}, 链接: ${url}</div>`;
+                    }
+                    
+                    //替换文件内容对象的链接,为了保证路径使用模板
+                    fileContent = fileContent.replace(String.raw`${imageSrc}`, url);
+                    //到最后一个图片的时候写入内容
+                    if(imgCount === uploadImgCount){
+                        fs.writeFileSync(outFilePath, fileContent);
+
+                        //自动退出应用
+                        setTimeout(() => {
+                            app.quit();
+                        }, config.appAutoExitTime);
+                    }
+                } );
+            })(imageList[i])
+        }
+    })
+</script>
+</html>

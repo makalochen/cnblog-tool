@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>上传到博客园</title>
+    <style>
+        body {
+            /*设置body背景颜色*/
+            background-color: #f5f5f5;
+        }
+        .container{
+            /*外边距居中*/
+            margin: 20px auto;
+            /*内边距*/
+            padding: 20px;
+            /*背景颜色*/
+            background-color: rgb(196,229,232);
+            /*边框为5px 实线 */
+            border: 5px solid rgb(0, 181, 203);
+            /*设置为弹性容器*/
+            display: flex;
+            /*设置从上到下*/
+            flex-direction: column;
+        }
+
+        .item {
+            /*背景颜色*/
+            background-color: rgb(0, 181, 203);
+            /*字体颜色*/
+            color: white;
+            /*宽*/
+            width: 100%;
+            /*高*/
+            height: 20%;
+            /*外边距*/
+            margin: 2px;
+            /*字体加粗*/
+            font-weight: bold;
+            /*字体大小*/
+            /*font-size: 5em;*/
+            /*文字居中*/
+            /*text-align: center;*/
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="item">
+            <label>请勾选分类</label>
+        </div>
+        <div class="item">
+            <label>注意: 上传的标题会跟文件名一致,如需修改直接修改文件名即可！</label>
+        </div>
+        <div id="category">
+
+        </div>
+        <div class="item">
+            <label>是否去掉第一行标题：</label>
+            是<input name="removeTitle" type="radio" value="1" checked="checked"/>
+            否<input name="removeTitle" type="radio" value="0" />
+        </div>
+        <div class="item" style="text-align: center">
+            <button id="confirm_btn" onclick="confirm()" disabled="disabled">确认</button>
+        </div>
+        <div id="msg">
+
+        </div>
+    </div>
+</body>
+<script>
+    const { app,shell } = require('electron').remote;
+    const { ipcRenderer } = require('electron');
+    const fs = require('fs');
+    const path = require("path");
+    const rpc = require('../lib/rpc');
+    const md = require('../lib/md');
+    const config = require('../lib/config');
+    //当前应用的目录
+    const appPath = app.isPackaged ? path.dirname(app.getPath('exe')) : app.getAppPath();
+    //读取配置
+    const userInfo = JSON.parse(fs.readFileSync(path.join(appPath,'cnblog-tool.json')).toString());
+    //源文件
+    var filePath = null;
+    var msgDom = document.getElementById('msg');
+
+    //监听主进程事件
+    ipcRenderer.on('file-path-event', (event, arg) => {
+        //写入要上传的文件路径
+        filePath = arg;
+
+        var categoryDom = document.getElementById('category');
+        //渲染分类选项
+        rpc.getCategories(userInfo.blogId,userInfo.username,userInfo.password, function (error, value) {
+            //console.log('value', value);
+            if(error){
+                msgDom.innerHTML += `<div>获取分类失败!</div>`;
+                msgDom.innerHTML += `<div>错误原因:${error}</div>`;
+            }else{
+                //设置确认按钮可点击
+                document.getElementById('confirm_btn').removeAttribute('disabled');
+                const myCategory = rpc.getMyCategory(value);
+                //console.log(myCategory);
+
+                for (let i = 0; i < myCategory.length; i++) {
+
+                    let item = `
+                        <input type="checkbox" name="${myCategory[i].title}" value="${myCategory[i].title}"/>
+                        <label>${myCategory[i].title}</label>
+                    `;
+                    let divItem = document.createElement('div');
+                    divItem.className = 'item';
+                    divItem.innerHTML = item;
+                    categoryDom.append(divItem);
+                }
+            }
+        })
+    })
+    
+    function confirm() {
+
+        //判断文件是否存在
+        if( !fs.existsSync( filePath ) ){
+            msgDom.innerText = '文件不存在';
+            return false;
+        }
+
+        let categories = [];
+        //获取所有选中
+        nodes = document.querySelectorAll('input[type="checkbox"]');
+        for (let i = 0; i < nodes.length; i++) {
+            //过滤未选中的
+            if( !nodes[i].checked || nodes[i].checked === false){
+                continue;
+            }
+            categories.push(nodes[i].value);
+        }
+
+        //获取单选框的选中
+        let redios = document.querySelectorAll('input[type="radio"]');
+        let rediosValue = 0;
+        for (let i = 0; i < redios.length; i++) {
+            //获取到，循环结束
+            if(redios[i].checked === true) {
+                rediosValue = redios[i].value;
+                break;
+            }
+        }
+        let delFirstRow = true;
+        //判断选中状态
+        if(rediosValue == '0'){
+            delFirstRow = false;
+        }
+
+        //上传博客
+        rpc.newPost(userInfo.blogId,userInfo.username,userInfo.password,filePath,categories,delFirstRow,true,(error, value) =>{
+            if(error){
+                msgDom.innerHTML += `<div>上传博客失败!</div>`;
+                console.log('err:',error);
+                return ;
+            }
+            msgDom.innerHTML += `<div>上传博客成功，链接为：<br/> <a href="javascript:;" onclick="openUrl('https://www.cnblogs.com/${userInfo.username}/p/${value}.html')">https://www.cnblogs.com/${userInfo.username}/p/${value}.html</a></div>`;
+        })
+    }
+
+    //用默认浏览器打开
+    function openUrl(url) {
+        shell.openExternal(url);
+        //自动退出应用
+        setTimeout(() => {
+            app.quit();
+        }, config.appAutoExitTime);
+    }
+</script>
+</html>
